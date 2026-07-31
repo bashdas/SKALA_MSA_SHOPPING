@@ -1,3 +1,27 @@
+server:
+  port: 8081
+
 spring:
   application:
     name: user-service
+  datasource:
+    url: jdbc:h2:mem:userdb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+jwt:
+  # 개발 편의를 위한 기본값이며 실제 운영 환경에서는 반드시 JWT_SECRET 환경변수로 교체해야 한다.
+  secret: ${JWT_SECRET:dev-only-jwt-secret-key-must-be-replaced-in-production-2026}
+  access-token-expiration-seconds: 3600
