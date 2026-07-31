@@ -1,0 +1,30 @@
+# IntelliJ
+.idea/
+*.iml
+out/
+
+# VS Code
+.vscode/
+
+# Gradle
+.gradle/
+**/build/
+
+# Java
+*.class
+*.jar
+*.war
+
+# macOS
+.DS_Store
+
+# Environment
+.env
+*.env
+
+# Logs
+*.log
+
+# H2 Database
+*.mv.db
+*.trace.db
