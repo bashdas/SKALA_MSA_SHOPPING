@@ -1,5 +1,13 @@
 package com.skala.orderservice.common.exception;
 
+import com.skala.orderservice.order.domain.exception.CancelledOrderException;
+import com.skala.orderservice.order.domain.exception.ExcessiveCancelQuantityException;
+import com.skala.orderservice.order.domain.exception.InvalidCustomerIdException;
+import com.skala.orderservice.order.domain.exception.InvalidOrderItemException;
+import com.skala.orderservice.order.domain.exception.InvalidOrderQuantityException;
+import com.skala.orderservice.order.domain.exception.OrderAlreadyCancelledException;
+import com.skala.orderservice.order.domain.exception.OrderItemNotFoundException;
+import com.skala.orderservice.order.domain.exception.OrderNotFoundException;
 import com.skala.orderservice.product.domain.exception.DiscontinuedProductException;
 import com.skala.orderservice.product.domain.exception.InsufficientStockException;
 import com.skala.orderservice.product.domain.exception.InvalidProductNameException;
@@ -12,6 +20,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -60,6 +70,54 @@ public class GlobalExceptionHandler {
 		return error(HttpStatus.CONFLICT, "DISCONTINUED_PRODUCT", exception.getMessage(), request);
 	}
 
+	@ExceptionHandler(OrderNotFoundException.class)
+	public ResponseEntity<ErrorResponse> handleOrderNotFound(
+			OrderNotFoundException exception, HttpServletRequest request) {
+		return error(HttpStatus.NOT_FOUND, "ORDER_NOT_FOUND", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(OrderItemNotFoundException.class)
+	public ResponseEntity<ErrorResponse> handleOrderItemNotFound(
+			OrderItemNotFoundException exception, HttpServletRequest request) {
+		return error(HttpStatus.NOT_FOUND, "ORDER_ITEM_NOT_FOUND", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(InvalidCustomerIdException.class)
+	public ResponseEntity<ErrorResponse> handleInvalidCustomerId(
+			InvalidCustomerIdException exception, HttpServletRequest request) {
+		return error(HttpStatus.BAD_REQUEST, "INVALID_CUSTOMER_ID", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(InvalidOrderItemException.class)
+	public ResponseEntity<ErrorResponse> handleInvalidOrderItem(
+			InvalidOrderItemException exception, HttpServletRequest request) {
+		return error(HttpStatus.BAD_REQUEST, "INVALID_ORDER_ITEM", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(InvalidOrderQuantityException.class)
+	public ResponseEntity<ErrorResponse> handleInvalidOrderQuantity(
+			InvalidOrderQuantityException exception, HttpServletRequest request) {
+		return error(HttpStatus.BAD_REQUEST, "INVALID_ORDER_QUANTITY", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(ExcessiveCancelQuantityException.class)
+	public ResponseEntity<ErrorResponse> handleExcessiveCancelQuantity(
+			ExcessiveCancelQuantityException exception, HttpServletRequest request) {
+		return error(HttpStatus.CONFLICT, "EXCESSIVE_CANCEL_QUANTITY", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(CancelledOrderException.class)
+	public ResponseEntity<ErrorResponse> handleCancelledOrder(
+			CancelledOrderException exception, HttpServletRequest request) {
+		return error(HttpStatus.CONFLICT, "CANCELLED_ORDER", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(OrderAlreadyCancelledException.class)
+	public ResponseEntity<ErrorResponse> handleOrderAlreadyCancelled(
+			OrderAlreadyCancelledException exception, HttpServletRequest request) {
+		return error(HttpStatus.CONFLICT, "ORDER_ALREADY_CANCELLED", exception.getMessage(), request);
+	}
+
 	@ExceptionHandler(MethodArgumentNotValidException.class)
 	public ResponseEntity<ErrorResponse> handleValidation(HttpServletRequest request) {
 		return error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", INVALID_REQUEST_MESSAGE, request);
@@ -67,6 +125,11 @@ public class GlobalExceptionHandler {
 
 	@ExceptionHandler(HttpMessageNotReadableException.class)
 	public ResponseEntity<ErrorResponse> handleUnreadableMessage(HttpServletRequest request) {
+		return error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", INVALID_REQUEST_MESSAGE, request);
+	}
+
+	@ExceptionHandler({HandlerMethodValidationException.class, MissingServletRequestParameterException.class})
+	public ResponseEntity<ErrorResponse> handleRequestParameterValidation(HttpServletRequest request) {
 		return error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", INVALID_REQUEST_MESSAGE, request);
 	}
 
