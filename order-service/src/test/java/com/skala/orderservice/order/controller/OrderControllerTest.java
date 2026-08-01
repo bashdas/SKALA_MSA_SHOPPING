@@ -1,12 +1,19 @@
 package com.skala.orderservice.order.controller;
 
+import com.skala.orderservice.client.user.exception.CustomerNotFoundException;
+import com.skala.orderservice.client.user.exception.InsufficientFundsException;
+import com.skala.orderservice.client.user.exception.UserServiceUnavailableException;
+import com.skala.orderservice.client.user.exception.WithdrawnCustomerException;
 import com.skala.orderservice.order.domain.OrderStatus;
 import com.skala.orderservice.order.domain.exception.ExcessiveCancelQuantityException;
 import com.skala.orderservice.order.domain.exception.OrderAlreadyCancelledException;
 import com.skala.orderservice.order.domain.exception.OrderNotFoundException;
+import com.skala.orderservice.order.domain.exception.InvalidPointAmountException;
+import com.skala.orderservice.order.domain.exception.OrderCompensationFailedException;
 import com.skala.orderservice.order.dto.response.OrderItemResponse;
 import com.skala.orderservice.order.dto.response.OrderResponse;
 import com.skala.orderservice.order.service.OrderCreationResult;
+import com.skala.orderservice.order.service.OrderPlacementService;
 import com.skala.orderservice.order.service.OrderService;
 import com.skala.orderservice.product.domain.exception.InsufficientStockException;
 import com.skala.orderservice.product.domain.exception.ProductNotFoundException;
@@ -37,22 +44,23 @@ class OrderControllerTest {
 
 	@Autowired MockMvc mockMvc;
 	@MockitoBean OrderService orderService;
+	@MockitoBean OrderPlacementService orderPlacementService;
 
 	@Test
 	void createsNewOrderWith201() throws Exception {
-		when(orderService.createOrAddOrder(any())).thenReturn(new OrderCreationResult(response(), true));
+		when(orderPlacementService.placeOrder(any())).thenReturn(new OrderCreationResult(response(), true));
 		performValidCreate().andExpect(status().isCreated());
 	}
 
 	@Test
 	void setsLocationForNewOrder() throws Exception {
-		when(orderService.createOrAddOrder(any())).thenReturn(new OrderCreationResult(response(), true));
+		when(orderPlacementService.placeOrder(any())).thenReturn(new OrderCreationResult(response(), true));
 		performValidCreate().andExpect(header().string("Location", "/api/orders/1"));
 	}
 
 	@Test
 	void returns200WhenAddingToExistingOrder() throws Exception {
-		when(orderService.createOrAddOrder(any())).thenReturn(new OrderCreationResult(response(), false));
+		when(orderPlacementService.placeOrder(any())).thenReturn(new OrderCreationResult(response(), false));
 		performValidCreate().andExpect(status().isOk());
 	}
 
@@ -81,14 +89,14 @@ class OrderControllerTest {
 
 	@Test
 	void mapsInsufficientStockTo409() throws Exception {
-		when(orderService.createOrAddOrder(any())).thenThrow(new InsufficientStockException("상품 재고가 부족합니다."));
+		when(orderPlacementService.placeOrder(any())).thenThrow(new InsufficientStockException("상품 재고가 부족합니다."));
 		performValidCreate().andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("INSUFFICIENT_STOCK"));
 	}
 
 	@Test
 	void mapsMissingProductTo404() throws Exception {
-		when(orderService.createOrAddOrder(any())).thenThrow(new ProductNotFoundException());
+		when(orderPlacementService.placeOrder(any())).thenThrow(new ProductNotFoundException());
 		performValidCreate().andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("PRODUCT_NOT_FOUND"));
 	}
@@ -153,6 +161,51 @@ class OrderControllerTest {
 				.andExpect(jsonPath("$.orderItems").doesNotExist())
 				.andExpect(jsonPath("$.items[0].order").doesNotExist())
 				.andExpect(jsonPath("$.hibernateLazyInitializer").doesNotExist());
+	}
+
+	@Test
+	void mapsCustomerNotFoundDuringPlacement() throws Exception {
+		when(orderPlacementService.placeOrder(any())).thenThrow(new CustomerNotFoundException());
+		performValidCreate().andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("CUSTOMER_NOT_FOUND"));
+	}
+
+	@Test
+	void mapsWithdrawnCustomerDuringPlacement() throws Exception {
+		when(orderPlacementService.placeOrder(any())).thenThrow(new WithdrawnCustomerException());
+		performValidCreate().andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("WITHDRAWN_CUSTOMER"));
+	}
+
+	@Test
+	void mapsInsufficientFundsDuringPlacement() throws Exception {
+		when(orderPlacementService.placeOrder(any())).thenThrow(new InsufficientFundsException());
+		performValidCreate().andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("INSUFFICIENT_FUNDS"));
+	}
+
+	@Test
+	void mapsUserServiceUnavailableDuringPlacement() throws Exception {
+		when(orderPlacementService.placeOrder(any())).thenThrow(new UserServiceUnavailableException());
+		performValidCreate().andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.code").value("USER_SERVICE_UNAVAILABLE"));
+	}
+
+	@Test
+	void mapsInvalidPointAmountDuringPlacement() throws Exception {
+		when(orderPlacementService.placeOrder(any())).thenThrow(new InvalidPointAmountException());
+		performValidCreate().andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("INVALID_POINT_AMOUNT"));
+	}
+
+	@Test
+	void mapsCompensationFailureDuringPlacement() throws Exception {
+		when(orderPlacementService.placeOrder(any())).thenThrow(
+				new OrderCompensationFailedException(
+						new RuntimeException("order failure"), new RuntimeException("refund failure")));
+		performValidCreate().andExpect(status().isInternalServerError())
+				.andExpect(jsonPath("$.code").value("ORDER_COMPENSATION_FAILED"))
+				.andExpect(jsonPath("$.message").value("주문 처리 보상에 실패했습니다."));
 	}
 
 	private org.springframework.test.web.servlet.ResultActions performValidCreate() throws Exception {

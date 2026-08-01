@@ -11,7 +11,9 @@ import com.skala.orderservice.order.domain.exception.ExcessiveCancelQuantityExce
 import com.skala.orderservice.order.domain.exception.InvalidCustomerIdException;
 import com.skala.orderservice.order.domain.exception.InvalidOrderItemException;
 import com.skala.orderservice.order.domain.exception.InvalidOrderQuantityException;
+import com.skala.orderservice.order.domain.exception.InvalidPointAmountException;
 import com.skala.orderservice.order.domain.exception.OrderAlreadyCancelledException;
+import com.skala.orderservice.order.domain.exception.OrderCompensationFailedException;
 import com.skala.orderservice.order.domain.exception.OrderItemNotFoundException;
 import com.skala.orderservice.order.domain.exception.OrderNotFoundException;
 import com.skala.orderservice.product.domain.exception.DiscontinuedProductException;
@@ -122,6 +124,18 @@ public class GlobalExceptionHandler {
 	public ResponseEntity<ErrorResponse> handleOrderAlreadyCancelled(
 			OrderAlreadyCancelledException exception, HttpServletRequest request) {
 		return error(HttpStatus.CONFLICT, "ORDER_ALREADY_CANCELLED", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(InvalidPointAmountException.class)
+	public ResponseEntity<ErrorResponse> handleInvalidPointAmount(
+			InvalidPointAmountException exception, HttpServletRequest request) {
+		return error(HttpStatus.BAD_REQUEST, "INVALID_POINT_AMOUNT", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(OrderCompensationFailedException.class)
+	public ResponseEntity<ErrorResponse> handleOrderCompensationFailed(
+			OrderCompensationFailedException exception, HttpServletRequest request) {
+		return error(HttpStatus.INTERNAL_SERVER_ERROR, "ORDER_COMPENSATION_FAILED", exception.getMessage(), request);
 	}
 
 	@ExceptionHandler(CustomerNotFoundException.class)

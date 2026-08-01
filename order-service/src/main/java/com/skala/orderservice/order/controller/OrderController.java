@@ -4,6 +4,7 @@ import com.skala.orderservice.order.dto.request.CancelOrderItemRequest;
 import com.skala.orderservice.order.dto.request.CreateOrderRequest;
 import com.skala.orderservice.order.dto.response.OrderResponse;
 import com.skala.orderservice.order.service.OrderCreationResult;
+import com.skala.orderservice.order.service.OrderPlacementService;
 import com.skala.orderservice.order.service.OrderService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
@@ -25,14 +26,16 @@ import java.util.List;
 public class OrderController {
 
 	private final OrderService orderService;
+	private final OrderPlacementService orderPlacementService;
 
-	public OrderController(OrderService orderService) {
+	public OrderController(OrderService orderService, OrderPlacementService orderPlacementService) {
 		this.orderService = orderService;
+		this.orderPlacementService = orderPlacementService;
 	}
 
 	@PostMapping
 	public ResponseEntity<OrderResponse> createOrAddOrder(@Valid @RequestBody CreateOrderRequest request) {
-		OrderCreationResult result = orderService.createOrAddOrder(request);
+		OrderCreationResult result = orderPlacementService.placeOrder(request);
 		if (result.created()) {
 			return ResponseEntity
 					.created(URI.create("/api/orders/" + result.response().id()))

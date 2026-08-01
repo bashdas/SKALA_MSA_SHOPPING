@@ -17,6 +17,7 @@ import com.skala.orderservice.product.repository.ProductRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +49,7 @@ public class OrderService {
 		if (created) {
 			order = Order.create(request.customerId());
 		}
+		BigDecimal beforeTotalAmount = order.getTotalAmount();
 
 		for (Map.Entry<Long, Integer> entry : quantitiesByProductId.entrySet()) {
 			Product product = lockedProducts.get(entry.getKey());
@@ -55,7 +57,8 @@ public class OrderService {
 		}
 
 		Order savedOrder = orderRepository.save(order);
-		return new OrderCreationResult(OrderResponse.from(savedOrder), created);
+		BigDecimal increasedAmount = savedOrder.getTotalAmount().subtract(beforeTotalAmount);
+		return new OrderCreationResult(OrderResponse.from(savedOrder), created, increasedAmount);
 	}
 
 	public OrderResponse getOrder(Long orderId) {
