@@ -2,6 +2,7 @@ package com.skala.orderservice.order.controller;
 
 import com.skala.orderservice.client.user.exception.CustomerNotFoundException;
 import com.skala.orderservice.client.user.exception.InsufficientFundsException;
+import com.skala.orderservice.client.user.exception.PointRequestConflictException;
 import com.skala.orderservice.client.user.exception.UserServiceUnavailableException;
 import com.skala.orderservice.client.user.exception.WithdrawnCustomerException;
 import com.skala.orderservice.order.domain.OrderStatus;
@@ -10,9 +11,11 @@ import com.skala.orderservice.order.domain.exception.OrderAlreadyCancelledExcept
 import com.skala.orderservice.order.domain.exception.OrderNotFoundException;
 import com.skala.orderservice.order.domain.exception.InvalidPointAmountException;
 import com.skala.orderservice.order.domain.exception.OrderCompensationFailedException;
+import com.skala.orderservice.order.domain.exception.OrderCancellationCompensationFailedException;
 import com.skala.orderservice.order.dto.response.OrderItemResponse;
 import com.skala.orderservice.order.dto.response.OrderResponse;
 import com.skala.orderservice.order.service.OrderCreationResult;
+import com.skala.orderservice.order.service.OrderCancellationService;
 import com.skala.orderservice.order.service.OrderPlacementService;
 import com.skala.orderservice.order.service.OrderService;
 import com.skala.orderservice.product.domain.exception.InsufficientStockException;
@@ -45,6 +48,7 @@ class OrderControllerTest {
 	@Autowired MockMvc mockMvc;
 	@MockitoBean OrderService orderService;
 	@MockitoBean OrderPlacementService orderPlacementService;
+	@MockitoBean OrderCancellationService orderCancellationService;
 
 	@Test
 	void createsNewOrderWith201() throws Exception {
@@ -124,7 +128,7 @@ class OrderControllerTest {
 
 	@Test
 	void partiallyCancelsOrderItem() throws Exception {
-		when(orderService.cancelOrderItem(1L, 1L, 1)).thenReturn(response());
+		when(orderCancellationService.cancelOrderItem(1L, 1L, 1)).thenReturn(response());
 		mockMvc.perform(patch("/api/orders/1/items/1/cancel")
 					.contentType(MediaType.APPLICATION_JSON).content("{\"quantity\":1}"))
 				.andExpect(status().isOk());
@@ -132,7 +136,7 @@ class OrderControllerTest {
 
 	@Test
 	void mapsExcessiveCancellationTo409() throws Exception {
-		when(orderService.cancelOrderItem(1L, 1L, 10))
+		when(orderCancellationService.cancelOrderItem(1L, 1L, 10))
 				.thenThrow(new ExcessiveCancelQuantityException("주문 수량보다 많이 취소할 수 없습니다."));
 		mockMvc.perform(patch("/api/orders/1/items/1/cancel")
 					.contentType(MediaType.APPLICATION_JSON).content("{\"quantity\":10}"))
@@ -142,14 +146,14 @@ class OrderControllerTest {
 
 	@Test
 	void cancelsEntireOrderWith204() throws Exception {
-		doNothing().when(orderService).cancelOrder(1L);
+		doNothing().when(orderCancellationService).cancelOrder(1L);
 		mockMvc.perform(patch("/api/orders/1/cancel")).andExpect(status().isNoContent());
 	}
 
 	@Test
 	void mapsDuplicateCancellationTo409() throws Exception {
 		doThrow(new OrderAlreadyCancelledException("이미 취소된 주문입니다."))
-				.when(orderService).cancelOrder(1L);
+				.when(orderCancellationService).cancelOrder(1L);
 		mockMvc.perform(patch("/api/orders/1/cancel")).andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("ORDER_ALREADY_CANCELLED"));
 	}
@@ -208,10 +212,51 @@ class OrderControllerTest {
 				.andExpect(jsonPath("$.message").value("주문 처리 보상에 실패했습니다."));
 	}
 
+	@Test
+	void mapsWithdrawnCustomerDuringCancellation() throws Exception {
+		when(orderCancellationService.cancelOrderItem(1L, 1L, 1))
+				.thenThrow(new WithdrawnCustomerException());
+		performPartialCancel(1).andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("WITHDRAWN_CUSTOMER"));
+	}
+
+	@Test
+	void mapsPointRequestConflictDuringCancellation() throws Exception {
+		when(orderCancellationService.cancelOrderItem(1L, 1L, 1))
+				.thenThrow(new PointRequestConflictException());
+		performPartialCancel(1).andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("POINT_REQUEST_CONFLICT"));
+	}
+
+	@Test
+	void mapsUserServiceUnavailableDuringCancellation() throws Exception {
+		when(orderCancellationService.cancelOrderItem(1L, 1L, 1))
+				.thenThrow(new UserServiceUnavailableException());
+		performPartialCancel(1).andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.code").value("USER_SERVICE_UNAVAILABLE"));
+	}
+
+	@Test
+	void mapsCancellationCompensationFailure() throws Exception {
+		doThrow(new OrderCancellationCompensationFailedException(
+				new RuntimeException("commit"), new RuntimeException("re-deduct")))
+				.when(orderCancellationService).cancelOrder(1L);
+		mockMvc.perform(patch("/api/orders/1/cancel"))
+				.andExpect(status().isInternalServerError())
+				.andExpect(jsonPath("$.code").value("ORDER_CANCELLATION_COMPENSATION_FAILED"))
+				.andExpect(jsonPath("$.message").value("주문 취소 보상에 실패했습니다."));
+	}
+
 	private org.springframework.test.web.servlet.ResultActions performValidCreate() throws Exception {
 		return mockMvc.perform(post("/api/orders").contentType(MediaType.APPLICATION_JSON).content("""
 				{"customerId":1,"items":[{"productId":1,"quantity":2}]}
 				"""));
+	}
+
+	private org.springframework.test.web.servlet.ResultActions performPartialCancel(int quantity) throws Exception {
+		return mockMvc.perform(patch("/api/orders/1/items/1/cancel")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"quantity\":" + quantity + "}"));
 	}
 
 	private OrderResponse response() {

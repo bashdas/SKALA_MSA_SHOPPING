@@ -4,6 +4,7 @@ import com.skala.orderservice.order.dto.request.CancelOrderItemRequest;
 import com.skala.orderservice.order.dto.request.CreateOrderRequest;
 import com.skala.orderservice.order.dto.response.OrderResponse;
 import com.skala.orderservice.order.service.OrderCreationResult;
+import com.skala.orderservice.order.service.OrderCancellationService;
 import com.skala.orderservice.order.service.OrderPlacementService;
 import com.skala.orderservice.order.service.OrderService;
 import jakarta.validation.Valid;
@@ -27,10 +28,15 @@ public class OrderController {
 
 	private final OrderService orderService;
 	private final OrderPlacementService orderPlacementService;
+	private final OrderCancellationService orderCancellationService;
 
-	public OrderController(OrderService orderService, OrderPlacementService orderPlacementService) {
+	public OrderController(
+			OrderService orderService,
+			OrderPlacementService orderPlacementService,
+			OrderCancellationService orderCancellationService) {
 		this.orderService = orderService;
 		this.orderPlacementService = orderPlacementService;
+		this.orderCancellationService = orderCancellationService;
 	}
 
 	@PostMapping
@@ -59,12 +65,12 @@ public class OrderController {
 			@PathVariable Long orderId,
 			@PathVariable Long productId,
 			@Valid @RequestBody CancelOrderItemRequest request) {
-		return orderService.cancelOrderItem(orderId, productId, request.quantity());
+		return orderCancellationService.cancelOrderItem(orderId, productId, request.quantity());
 	}
 
 	@PatchMapping("/{orderId}/cancel")
 	public ResponseEntity<Void> cancelOrder(@PathVariable Long orderId) {
-		orderService.cancelOrder(orderId);
+		orderCancellationService.cancelOrder(orderId);
 		return ResponseEntity.noContent().build();
 	}
 }

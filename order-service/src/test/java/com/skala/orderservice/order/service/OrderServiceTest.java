@@ -323,6 +323,23 @@ class OrderServiceTest {
 	}
 
 	@Test
+	void locksProductsInIdOrderWhenCancellingEntireOrder() {
+		Order order = order(1L, 2L, "마우스", 500, 1);
+		order.addItem(1L, "키보드", BigDecimal.valueOf(1_000), 2);
+		Product first = product(1L, "키보드", 1_000, 8);
+		Product second = product(2L, "마우스", 500, 9);
+		when(orderRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
+		when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(first));
+		when(productRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(second));
+
+		orderService.cancelOrderLocally(1L);
+
+		InOrder lockOrder = inOrder(productRepository);
+		lockOrder.verify(productRepository).findByIdForUpdate(1L);
+		lockOrder.verify(productRepository).findByIdForUpdate(2L);
+	}
+
+	@Test
 	void rejectsDuplicateEntireCancellation() {
 		Order order = Order.create(1L);
 		order.cancel();

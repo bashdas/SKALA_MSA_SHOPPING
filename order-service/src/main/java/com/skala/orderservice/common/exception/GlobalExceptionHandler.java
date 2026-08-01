@@ -13,6 +13,7 @@ import com.skala.orderservice.order.domain.exception.InvalidOrderItemException;
 import com.skala.orderservice.order.domain.exception.InvalidOrderQuantityException;
 import com.skala.orderservice.order.domain.exception.InvalidPointAmountException;
 import com.skala.orderservice.order.domain.exception.OrderAlreadyCancelledException;
+import com.skala.orderservice.order.domain.exception.OrderCancellationCompensationFailedException;
 import com.skala.orderservice.order.domain.exception.OrderCompensationFailedException;
 import com.skala.orderservice.order.domain.exception.OrderItemNotFoundException;
 import com.skala.orderservice.order.domain.exception.OrderNotFoundException;
@@ -136,6 +137,17 @@ public class GlobalExceptionHandler {
 	public ResponseEntity<ErrorResponse> handleOrderCompensationFailed(
 			OrderCompensationFailedException exception, HttpServletRequest request) {
 		return error(HttpStatus.INTERNAL_SERVER_ERROR, "ORDER_COMPENSATION_FAILED", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(OrderCancellationCompensationFailedException.class)
+	public ResponseEntity<ErrorResponse> handleOrderCancellationCompensationFailed(
+			OrderCancellationCompensationFailedException exception, HttpServletRequest request) {
+		return error(
+				HttpStatus.INTERNAL_SERVER_ERROR,
+				"ORDER_CANCELLATION_COMPENSATION_FAILED",
+				exception.getMessage(),
+				request
+		);
 	}
 
 	@ExceptionHandler(CustomerNotFoundException.class)

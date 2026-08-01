@@ -75,6 +75,11 @@ public class OrderService {
 
 	@Transactional
 	public OrderResponse cancelOrderItem(Long orderId, Long productId, int quantity) {
+		return cancelOrderItemLocally(orderId, productId, quantity).response();
+	}
+
+	@Transactional
+	public OrderItemCancellationResult cancelOrderItemLocally(Long orderId, Long productId, int quantity) {
 		Order order = orderRepository.findByIdForUpdate(orderId)
 				.orElseThrow(OrderNotFoundException::new);
 		if (order.getStatus() == OrderStatus.CANCELLED) {
@@ -85,21 +90,31 @@ public class OrderService {
 				.filter(item -> item.getProductId().equals(productId))
 				.findFirst()
 				.orElseThrow(() -> new OrderItemNotFoundException("주문에서 상품을 찾을 수 없습니다."));
+		BigDecimal refundAmount = orderItem.getUnitPrice().multiply(BigDecimal.valueOf(quantity));
+		Long customerId = order.getCustomerId();
 
 		Product product = productRepository.findByIdForUpdate(orderItem.getProductId())
 				.orElseThrow(ProductNotFoundException::new);
 		order.cancelItem(productId, quantity);
 		product.restoreStock(quantity);
-		return OrderResponse.from(order);
+		return new OrderItemCancellationResult(
+				customerId, refundAmount, OrderResponse.from(order));
 	}
 
 	@Transactional
 	public void cancelOrder(Long orderId) {
+		cancelOrderLocally(orderId);
+	}
+
+	@Transactional
+	public OrderCancellationResult cancelOrderLocally(Long orderId) {
 		Order order = orderRepository.findByIdForUpdate(orderId)
 				.orElseThrow(OrderNotFoundException::new);
 		if (order.getStatus() == OrderStatus.CANCELLED) {
 			throw new OrderAlreadyCancelledException("이미 취소된 주문입니다.");
 		}
+		Long customerId = order.getCustomerId();
+		BigDecimal refundAmount = order.getTotalAmount();
 
 		List<RestockTarget> restockTargets = order.getOrderItems().stream()
 				.map(item -> new RestockTarget(item.getProductId(), item.getQuantity()))
@@ -112,6 +127,7 @@ public class OrderService {
 			product.restoreStock(target.quantity());
 		}
 		order.cancel();
+		return new OrderCancellationResult(customerId, refundAmount);
 	}
 
 	private Map<Long, Integer> aggregateQuantities(List<CreateOrderItemRequest> items) {
