@@ -4,6 +4,7 @@ set -u
 set -o pipefail
 
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
+GATEWAY_URL="http://127.0.0.1:8080"
 USER_URL="http://127.0.0.1:8081"
 ORDER_URL="http://127.0.0.1:8082"
 STARTUP_TIMEOUT=120
@@ -12,11 +13,15 @@ E2E_SECRET="msa-e2e-only-shared-secret-$(date +%s)-$$-do-not-use-in-production"
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/shopping-msa-e2e.XXXXXX")
 USER_LOG="$TMP_DIR/user-service.log"
 ORDER_LOG="$TMP_DIR/order-service.log"
+GATEWAY_LOG="$TMP_DIR/gateway-service.log"
 USER_PID=""
 ORDER_PID=""
+GATEWAY_PID=""
 TEST_PASSED=0
 RESPONSE_BODY="$TMP_DIR/response.json"
 HTTP_STATUS=""
+LAST_REQUEST_METHOD="N/A"
+LAST_REQUEST_URL="N/A"
 
 log_tail() {
   local label=$1 file=$2
@@ -33,9 +38,11 @@ terminate_tree() {
 }
 
 cleanup() {
+  terminate_tree "$GATEWAY_PID"
   terminate_tree "$ORDER_PID"
   terminate_tree "$USER_PID"
   sleep 1
+  terminate_tree "$GATEWAY_PID"
   terminate_tree "$ORDER_PID"
   terminate_tree "$USER_PID"
   if [ "$TEST_PASSED" -eq 1 ]; then
@@ -44,6 +51,7 @@ cleanup() {
     echo "E2E 실패 로그: $TMP_DIR" >&2
     log_tail "user-service" "$USER_LOG"
     log_tail "order-service" "$ORDER_LOG"
+    log_tail "gateway-service" "$GATEWAY_LOG"
   fi
 }
 trap cleanup EXIT INT TERM
@@ -51,6 +59,7 @@ trap cleanup EXIT INT TERM
 fail() {
   local step=$1 expected=$2 actual=${3:-"HTTP $HTTP_STATUS"}
   echo "E2E TEST FAILED: $step" >&2
+  echo "요청: $LAST_REQUEST_METHOD $LAST_REQUEST_URL" >&2
   echo "기대값: $expected" >&2
   echo "실제: $actual" >&2
   echo "실제 HTTP 상태: ${HTTP_STATUS:-N/A}" >&2
@@ -74,6 +83,7 @@ fi
 
 [ -x "$ROOT_DIR/user-service/gradlew" ] || { echo "user-service/gradlew를 실행할 수 없습니다." >&2; exit 1; }
 [ -x "$ROOT_DIR/order-service/gradlew" ] || { echo "order-service/gradlew를 실행할 수 없습니다." >&2; exit 1; }
+[ -x "$ROOT_DIR/gateway-service/gradlew" ] || { echo "gateway-service/gradlew를 실행할 수 없습니다." >&2; exit 1; }
 
 port_in_use() {
   local port=$1 rc
@@ -82,7 +92,7 @@ port_in_use() {
   [ "$rc" -ne 7 ]
 }
 
-for port in 8081 8082; do
+for port in 8080 8081 8082; do
   if port_in_use "$port"; then
     echo "포트 $port가 이미 사용 중입니다. 해당 프로세스를 종료한 뒤 다시 실행하세요." >&2
     exit 1
@@ -125,6 +135,8 @@ PY
 
 request() {
   local method=$1 url=$2 body=${3:-} token=${4:-}
+  LAST_REQUEST_METHOD=$method
+  LAST_REQUEST_URL=$url
   local args=(--silent --show-error --connect-timeout 3 --max-time 15 --output "$RESPONSE_BODY" --write-out "%{http_code}" --request "$method" "$url")
   [ -z "$body" ] || args+=(--header "Content-Type: application/json" --data "$body")
   [ -z "$token" ] || args+=(--header "Authorization: Bearer $token")
@@ -166,50 +178,76 @@ wait_ready() {
 (cd "$ROOT_DIR/user-service" && JWT_SECRET="$E2E_SECRET" ./gradlew bootRun) >"$USER_LOG" 2>&1 &
 USER_PID=$!
 echo "$USER_PID" >"$TMP_DIR/user-service.pid"
-(cd "$ROOT_DIR/order-service" && JWT_SECRET="$E2E_SECRET" ./gradlew bootRun) >"$ORDER_LOG" 2>&1 &
+wait_ready "user-service" "$USER_URL/api/customers?page=0&size=1" "$USER_PID"
+
+(cd "$ROOT_DIR/order-service" && \
+  JWT_SECRET="$E2E_SECRET" \
+  USER_SERVICE_BASE_URL="http://localhost:8081" \
+  ./gradlew bootRun) >"$ORDER_LOG" 2>&1 &
 ORDER_PID=$!
 echo "$ORDER_PID" >"$TMP_DIR/order-service.pid"
-
-wait_ready "user-service" "$USER_URL/api/customers?page=0&size=1" "$USER_PID"
 wait_ready "order-service" "$ORDER_URL/api/products?page=0&size=1" "$ORDER_PID"
-echo "[1/9] 서비스 실행 확인"
+
+(cd "$ROOT_DIR/gateway-service" && \
+  USER_SERVICE_URL="http://localhost:8081" \
+  ORDER_SERVICE_URL="http://localhost:8082" \
+  ./gradlew bootRun) >"$GATEWAY_LOG" 2>&1 &
+GATEWAY_PID=$!
+echo "$GATEWAY_PID" >"$TMP_DIR/gateway-service.pid"
+wait_ready "gateway-service" "$GATEWAY_URL/actuator/health" "$GATEWAY_PID"
+request GET "$GATEWAY_URL/actuator/health"
+assert_status "Gateway health" 200
+assert_field "Gateway health" "$RESPONSE_BODY" status UP
+echo "[1/11] 세 서비스 실행 및 Gateway health 확인"
 
 RUN_ID="$(date +%s)-$$"
 LOGIN_A="e2e-a-$RUN_ID"
 LOGIN_B="e2e-b-$RUN_ID"
 PASSWORD="E2e-pass-$RUN_ID"
 
-request POST "$USER_URL/api/customers" "{\"loginId\":\"$LOGIN_A\",\"password\":\"$PASSWORD\",\"name\":\"E2E Customer A\"}"
+request POST "$GATEWAY_URL/api/customers" "{\"loginId\":\"$LOGIN_A\",\"password\":\"$PASSWORD\",\"name\":\"E2E Customer A\"}"
 assert_status "고객 A 회원가입" 201
 assert_field "고객 A 초기 포인트" "$RESPONSE_BODY" point "$INITIAL_POINT"
 CUSTOMER_A=$(json_get "$RESPONSE_BODY" id)
 [ -n "$CUSTOMER_A" ] || fail "고객 A 회원가입" "비어 있지 않은 id" "id가 비어 있음"
-request POST "$USER_URL/api/customers/login" "{\"loginId\":\"$LOGIN_A\",\"password\":\"$PASSWORD\"}"
+
+request GET "$GATEWAY_URL/internal/customers/$CUSTOMER_A"
+assert_status "Gateway 내부 고객 API 미노출" 404
+request POST "$GATEWAY_URL/internal/customers/$CUSTOMER_A/points/refund" \
+  "{\"amount\":1,\"requestId\":\"gateway-route-check-$RUN_ID\"}"
+assert_status "Gateway 내부 포인트 API 미노출" 404
+# /internal/**는 Gateway Route가 없으므로, 포인트 불변 여부만 테스트 검증 목적으로 user-service에 직접 확인한다.
+request GET "$USER_URL/internal/customers/$CUSTOMER_A"
+assert_status "Gateway 내부 API 미노출 후 고객 직접 확인" 200
+assert_field "Gateway 내부 API 미노출 후 포인트 불변" "$RESPONSE_BODY" point "$INITIAL_POINT"
+echo "[2/11] Gateway 내부 API 미노출 확인"
+
+request POST "$GATEWAY_URL/api/customers/login" "{\"loginId\":\"$LOGIN_A\",\"password\":\"$PASSWORD\"}"
 assert_status "고객 A 로그인" 200
 TOKEN_A=$(json_get "$RESPONSE_BODY" accessToken)
 [ -n "$TOKEN_A" ] || fail "고객 A 로그인" "비어 있지 않은 accessToken" "accessToken이 비어 있음"
 assert_field "고객 A JWT 타입" "$RESPONSE_BODY" tokenType Bearer
-echo "[2/9] 고객 A 회원가입 및 로그인 성공"
+echo "[3/11] 고객 A 회원가입 및 로그인 성공"
 
-request POST "$ORDER_URL/api/products" "{\"name\":\"E2E Product A $RUN_ID\",\"price\":1000,\"stockQuantity\":10}"
+request POST "$GATEWAY_URL/api/products" "{\"name\":\"E2E Product A $RUN_ID\",\"price\":1000,\"stockQuantity\":10}"
 assert_status "상품 A 등록" 201
 PRODUCT_A=$(json_get "$RESPONSE_BODY" id)
 assert_field "상품 A 가격" "$RESPONSE_BODY" price 1000
 assert_field "상품 A 재고" "$RESPONSE_BODY" stockQuantity 10
-request POST "$ORDER_URL/api/products" "{\"name\":\"E2E Product B $RUN_ID\",\"price\":2000,\"stockQuantity\":10}"
+request POST "$GATEWAY_URL/api/products" "{\"name\":\"E2E Product B $RUN_ID\",\"price\":2000,\"stockQuantity\":10}"
 assert_status "상품 B 등록" 201
 PRODUCT_B=$(json_get "$RESPONSE_BODY" id)
 assert_field "상품 B 가격" "$RESPONSE_BODY" price 2000
 assert_field "상품 B 재고" "$RESPONSE_BODY" stockQuantity 10
-echo "[3/9] 상품 등록 성공"
+echo "[4/11] 상품 등록 성공"
 
 ORDER_BODY="{\"items\":[{\"productId\":$PRODUCT_A,\"quantity\":2},{\"productId\":$PRODUCT_B,\"quantity\":1}]}"
-request POST "$ORDER_URL/api/orders" "$ORDER_BODY"
+request POST "$GATEWAY_URL/api/orders" "$ORDER_BODY"
 assert_status "미인증 주문" 401
 assert_field "미인증 주문 오류 코드" "$RESPONSE_BODY" code UNAUTHORIZED
-echo "[4/9] 미인증 주문 차단 확인"
+echo "[5/11] 미인증 주문 차단 확인"
 
-request POST "$ORDER_URL/api/orders" "$ORDER_BODY" "$TOKEN_A"
+request POST "$GATEWAY_URL/api/orders" "$ORDER_BODY" "$TOKEN_A"
 assert_status "신규 주문" 201
 ORDER_ID=$(json_get "$RESPONSE_BODY" id)
 assert_field "신규 주문 고객" "$RESPONSE_BODY" customerId "$CUSTOMER_A"
@@ -220,15 +258,15 @@ assert_item "신규 주문 상품 B 수량" "$RESPONSE_BODY" "$PRODUCT_B" quanti
 request GET "$USER_URL/internal/customers/$CUSTOMER_A"
 assert_status "신규 주문 후 고객 조회" 200
 assert_field "신규 주문 후 포인트" "$RESPONSE_BODY" point 6000
-request GET "$ORDER_URL/api/products/$PRODUCT_A"
+request GET "$GATEWAY_URL/api/products/$PRODUCT_A"
 assert_status "신규 주문 후 상품 A 조회" 200
 assert_field "신규 주문 후 상품 A 재고" "$RESPONSE_BODY" stockQuantity 8
-request GET "$ORDER_URL/api/products/$PRODUCT_B"
+request GET "$GATEWAY_URL/api/products/$PRODUCT_B"
 assert_status "신규 주문 후 상품 B 조회" 200
 assert_field "신규 주문 후 상품 B 재고" "$RESPONSE_BODY" stockQuantity 9
-echo "[5/9] 신규 주문 및 포인트 차감 확인"
+echo "[6/11] 신규 주문 및 포인트 차감 확인"
 
-request POST "$ORDER_URL/api/orders" "{\"items\":[{\"productId\":$PRODUCT_A,\"quantity\":1}]}" "$TOKEN_A"
+request POST "$GATEWAY_URL/api/orders" "{\"items\":[{\"productId\":$PRODUCT_A,\"quantity\":1}]}" "$TOKEN_A"
 assert_status "기존 주문 수량 누적" 200
 assert_field "누적 주문 ID" "$RESPONSE_BODY" id "$ORDER_ID"
 assert_field "누적 주문 총액" "$RESPONSE_BODY" totalAmount 5000
@@ -236,30 +274,30 @@ assert_item "누적 주문 상품 A 수량" "$RESPONSE_BODY" "$PRODUCT_A" quanti
 request GET "$USER_URL/internal/customers/$CUSTOMER_A"
 assert_status "누적 주문 후 고객 조회" 200
 assert_field "누적 주문 후 포인트" "$RESPONSE_BODY" point 5000
-request GET "$ORDER_URL/api/products/$PRODUCT_A"
+request GET "$GATEWAY_URL/api/products/$PRODUCT_A"
 assert_status "누적 주문 후 상품 A 조회" 200
 assert_field "누적 주문 후 상품 A 재고" "$RESPONSE_BODY" stockQuantity 7
-request GET "$ORDER_URL/api/orders" "" "$TOKEN_A"
+request GET "$GATEWAY_URL/api/orders" "" "$TOKEN_A"
 assert_status "고객별 주문 목록" 200
 assert_field "고객별 주문 목록 ID" "$RESPONSE_BODY" 0.id "$ORDER_ID"
-echo "[6/9] 기존 주문 누적 및 증가분 차감 확인"
+echo "[7/11] 기존 주문 누적 및 증가분 차감 확인"
 
-request POST "$USER_URL/api/customers" "{\"loginId\":\"$LOGIN_B\",\"password\":\"$PASSWORD\",\"name\":\"E2E Customer B\"}"
+request POST "$GATEWAY_URL/api/customers" "{\"loginId\":\"$LOGIN_B\",\"password\":\"$PASSWORD\",\"name\":\"E2E Customer B\"}"
 assert_status "고객 B 회원가입" 201
-request POST "$USER_URL/api/customers/login" "{\"loginId\":\"$LOGIN_B\",\"password\":\"$PASSWORD\"}"
+request POST "$GATEWAY_URL/api/customers/login" "{\"loginId\":\"$LOGIN_B\",\"password\":\"$PASSWORD\"}"
 assert_status "고객 B 로그인" 200
 TOKEN_B=$(json_get "$RESPONSE_BODY" accessToken)
 [ -n "$TOKEN_B" ] || fail "고객 B 로그인" "비어 있지 않은 accessToken" "accessToken이 비어 있음"
-request GET "$ORDER_URL/api/orders/$ORDER_ID" "" "$TOKEN_B"
+request GET "$GATEWAY_URL/api/orders/$ORDER_ID" "" "$TOKEN_B"
 assert_status "타 고객 주문 조회" 403
 assert_field "타 고객 주문 조회 오류" "$RESPONSE_BODY" code FORBIDDEN_ORDER_ACCESS
-request PATCH "$ORDER_URL/api/orders/$ORDER_ID/items/$PRODUCT_A/cancel" '{"quantity":1}' "$TOKEN_B"
+request PATCH "$GATEWAY_URL/api/orders/$ORDER_ID/items/$PRODUCT_A/cancel" '{"quantity":1}' "$TOKEN_B"
 assert_status "타 고객 부분 취소" 403
 assert_field "타 고객 부분 취소 오류" "$RESPONSE_BODY" code FORBIDDEN_ORDER_ACCESS
-request PATCH "$ORDER_URL/api/orders/$ORDER_ID/cancel" "" "$TOKEN_B"
+request PATCH "$GATEWAY_URL/api/orders/$ORDER_ID/cancel" "" "$TOKEN_B"
 assert_status "타 고객 전체 취소" 403
 assert_field "타 고객 전체 취소 오류" "$RESPONSE_BODY" code FORBIDDEN_ORDER_ACCESS
-request GET "$ORDER_URL/api/orders/$ORDER_ID" "" "$TOKEN_A"
+request GET "$GATEWAY_URL/api/orders/$ORDER_ID" "" "$TOKEN_A"
 assert_status "소유권 차단 후 주문 조회" 200
 assert_field "소유권 차단 후 상태" "$RESPONSE_BODY" status CREATED
 assert_field "소유권 차단 후 총액" "$RESPONSE_BODY" totalAmount 5000
@@ -267,37 +305,42 @@ assert_item "소유권 차단 후 상품 A 수량" "$RESPONSE_BODY" "$PRODUCT_A"
 assert_item "소유권 차단 후 상품 B 수량" "$RESPONSE_BODY" "$PRODUCT_B" quantity 1
 request GET "$USER_URL/internal/customers/$CUSTOMER_A"
 assert_field "소유권 차단 후 포인트" "$RESPONSE_BODY" point 5000
-request GET "$ORDER_URL/api/products/$PRODUCT_A"
+request GET "$GATEWAY_URL/api/products/$PRODUCT_A"
 assert_field "소유권 차단 후 상품 A 재고" "$RESPONSE_BODY" stockQuantity 7
-request GET "$ORDER_URL/api/products/$PRODUCT_B"
+request GET "$GATEWAY_URL/api/products/$PRODUCT_B"
 assert_field "소유권 차단 후 상품 B 재고" "$RESPONSE_BODY" stockQuantity 9
-echo "[7/9] 타 고객 주문 접근 차단 확인"
+echo "[8/11] 타 고객 주문 접근 차단 확인"
 
-request PATCH "$ORDER_URL/api/orders/$ORDER_ID/items/$PRODUCT_A/cancel" '{"quantity":1}' "$TOKEN_A"
+request PATCH "$GATEWAY_URL/api/orders/$ORDER_ID/items/$PRODUCT_A/cancel" '{"quantity":1}' "$TOKEN_A"
 assert_status "부분 취소" 200
 assert_field "부분 취소 상태" "$RESPONSE_BODY" status CREATED
 assert_field "부분 취소 총액" "$RESPONSE_BODY" totalAmount 4000
 assert_item "부분 취소 상품 A 수량" "$RESPONSE_BODY" "$PRODUCT_A" quantity 2
 request GET "$USER_URL/internal/customers/$CUSTOMER_A"
 assert_field "부분 취소 후 포인트" "$RESPONSE_BODY" point 6000
-request GET "$ORDER_URL/api/products/$PRODUCT_A"
+request GET "$GATEWAY_URL/api/products/$PRODUCT_A"
 assert_field "부분 취소 후 상품 A 재고" "$RESPONSE_BODY" stockQuantity 8
-echo "[8/9] 부분 취소 및 일부 환불 확인"
+echo "[9/11] 부분 취소 및 일부 환불 확인"
 
-request PATCH "$ORDER_URL/api/orders/$ORDER_ID/cancel" "" "$TOKEN_A"
+request PATCH "$GATEWAY_URL/api/orders/$ORDER_ID/cancel" "" "$TOKEN_A"
 assert_status "전체 취소" 204
-request GET "$ORDER_URL/api/orders/$ORDER_ID" "" "$TOKEN_A"
+request GET "$GATEWAY_URL/api/orders/$ORDER_ID" "" "$TOKEN_A"
 assert_status "전체 취소 후 주문 조회" 200
 assert_field "전체 취소 후 상태" "$RESPONSE_BODY" status CANCELLED
 assert_field "전체 취소 후 총액" "$RESPONSE_BODY" totalAmount 0
 assert_field "전체 취소 후 주문상품 제거" "$RESPONSE_BODY" items '[]'
 request GET "$USER_URL/internal/customers/$CUSTOMER_A"
 assert_field "전체 취소 후 포인트" "$RESPONSE_BODY" point "$INITIAL_POINT"
-request GET "$ORDER_URL/api/products/$PRODUCT_A"
+request GET "$GATEWAY_URL/api/products/$PRODUCT_A"
 assert_field "전체 취소 후 상품 A 재고" "$RESPONSE_BODY" stockQuantity 10
-request GET "$ORDER_URL/api/products/$PRODUCT_B"
+request GET "$GATEWAY_URL/api/products/$PRODUCT_B"
 assert_field "전체 취소 후 상품 B 재고" "$RESPONSE_BODY" stockQuantity 10
-echo "[9/9] 전체 취소 및 최종 원상복구 확인"
+echo "[10/11] 전체 취소 및 최종 원상복구 확인"
+
+request GET "$GATEWAY_URL/unknown"
+assert_status "미등록 Gateway 경로" 404
+echo "[11/11] 미등록 Gateway 경로 차단 확인"
 
 TEST_PASSED=1
 echo "MSA E2E TEST PASSED"
+echo "GATEWAY MSA E2E TEST PASSED"
