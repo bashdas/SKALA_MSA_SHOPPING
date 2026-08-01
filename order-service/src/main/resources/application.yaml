@@ -30,3 +30,7 @@ clients:
     base-url: ${USER_SERVICE_BASE_URL:http://localhost:8081}
     connect-timeout: ${USER_SERVICE_CONNECT_TIMEOUT:1s}
     read-timeout: ${USER_SERVICE_READ_TIMEOUT:3s}
+
+jwt:
+  # user-service와 공유하는 개발용 대칭키이며 운영 환경에서는 반드시 환경변수로 교체한다.
+  secret: ${JWT_SECRET:dev-only-jwt-secret-key-must-be-replaced-in-production-2026}

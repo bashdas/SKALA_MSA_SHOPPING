@@ -7,7 +7,6 @@ import com.skala.orderservice.client.user.exception.UserServiceUnavailableExcept
 import com.skala.orderservice.client.user.exception.WithdrawnCustomerException;
 import com.skala.orderservice.order.domain.OrderStatus;
 import com.skala.orderservice.order.domain.exception.ExcessiveCancelQuantityException;
-import com.skala.orderservice.order.domain.exception.ForbiddenOrderAccessException;
 import com.skala.orderservice.order.domain.exception.OrderAlreadyCancelledException;
 import com.skala.orderservice.order.domain.exception.OrderNotFoundException;
 import com.skala.orderservice.order.domain.exception.InvalidPointAmountException;
@@ -23,28 +22,16 @@ import com.skala.orderservice.product.domain.exception.InsufficientStockExceptio
 import com.skala.orderservice.product.domain.exception.ProductNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Import;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.context.WebApplicationContext;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
-import com.skala.orderservice.security.SecurityConfig;
-import org.junit.jupiter.api.BeforeEach;
-
-import java.nio.charset.StandardCharsets;
-import java.util.Date;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
@@ -54,64 +41,39 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 
 @WebMvcTest(OrderController.class)
-@Import(SecurityConfig.class)
-@TestPropertySource(properties = "jwt.secret=order-service-jwt-test-secret-key-with-at-least-thirty-two-bytes")
 class OrderControllerTest {
 
-	private static final String TEST_SECRET =
-			"order-service-jwt-test-secret-key-with-at-least-thirty-two-bytes";
-
-	MockMvc mockMvc;
-	@Autowired WebApplicationContext context;
+	@Autowired MockMvc mockMvc;
 	@MockitoBean OrderService orderService;
 	@MockitoBean OrderPlacementService orderPlacementService;
 	@MockitoBean OrderCancellationService orderCancellationService;
 
-	@BeforeEach
-	void configureAuthenticatedClient() {
-		String token = Jwts.builder()
-				.subject("1")
-				.claim("loginId", "customer1")
-				.claim("status", "ACTIVE")
-				.issuedAt(new Date())
-				.expiration(new Date(System.currentTimeMillis() + 60_000))
-				.signWith(Keys.hmacShaKeyFor(TEST_SECRET.getBytes(StandardCharsets.UTF_8)), Jwts.SIG.HS256)
-				.compact();
-		mockMvc = MockMvcBuilders.webAppContextSetup(context)
-				.apply(springSecurity())
-				.defaultRequest(get("/").header("Authorization", "Bearer " + token))
-				.build();
-	}
-
 	@Test
 	void createsNewOrderWith201() throws Exception {
-		when(orderPlacementService.placeOrder(anyLong(), any())).thenReturn(new OrderCreationResult(response(), true));
+		when(orderPlacementService.placeOrder(any())).thenReturn(new OrderCreationResult(response(), true));
 		performValidCreate().andExpect(status().isCreated());
 	}
 
 	@Test
 	void setsLocationForNewOrder() throws Exception {
-		when(orderPlacementService.placeOrder(anyLong(), any())).thenReturn(new OrderCreationResult(response(), true));
+		when(orderPlacementService.placeOrder(any())).thenReturn(new OrderCreationResult(response(), true));
 		performValidCreate().andExpect(header().string("Location", "/api/orders/1"));
 	}
 
 	@Test
 	void returns200WhenAddingToExistingOrder() throws Exception {
-		when(orderPlacementService.placeOrder(anyLong(), any())).thenReturn(new OrderCreationResult(response(), false));
+		when(orderPlacementService.placeOrder(any())).thenReturn(new OrderCreationResult(response(), false));
 		performValidCreate().andExpect(status().isOk());
 	}
 
 	@Test
-	void ignoresCustomerIdFromJsonAndUsesAuthenticatedCustomer() throws Exception {
-		when(orderPlacementService.placeOrder(anyLong(), any()))
-				.thenReturn(new OrderCreationResult(response(), true));
+	void rejectsInvalidCustomerId() throws Exception {
 		mockMvc.perform(post("/api/orders").contentType(MediaType.APPLICATION_JSON).content("""
 				{"customerId":0,"items":[{"productId":1,"quantity":1}]}
 				"""))
-				.andExpect(status().isCreated());
+				.andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
 	}
 
 	@Test
@@ -131,38 +93,30 @@ class OrderControllerTest {
 
 	@Test
 	void mapsInsufficientStockTo409() throws Exception {
-		when(orderPlacementService.placeOrder(anyLong(), any())).thenThrow(new InsufficientStockException("상품 재고가 부족합니다."));
+		when(orderPlacementService.placeOrder(any())).thenThrow(new InsufficientStockException("상품 재고가 부족합니다."));
 		performValidCreate().andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("INSUFFICIENT_STOCK"));
 	}
 
 	@Test
 	void mapsMissingProductTo404() throws Exception {
-		when(orderPlacementService.placeOrder(anyLong(), any())).thenThrow(new ProductNotFoundException());
+		when(orderPlacementService.placeOrder(any())).thenThrow(new ProductNotFoundException());
 		performValidCreate().andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("PRODUCT_NOT_FOUND"));
 	}
 
 	@Test
 	void getsOrder() throws Exception {
-		when(orderService.getOrder(1L, 1L)).thenReturn(response());
+		when(orderService.getOrder(1L)).thenReturn(response());
 		mockMvc.perform(get("/api/orders/1")).andExpect(status().isOk())
 				.andExpect(jsonPath("$.items[0].productName").value("키보드"));
 	}
 
 	@Test
 	void mapsMissingOrderTo404() throws Exception {
-		when(orderService.getOrder(1L, 1L)).thenThrow(new OrderNotFoundException());
+		when(orderService.getOrder(1L)).thenThrow(new OrderNotFoundException());
 		mockMvc.perform(get("/api/orders/1")).andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("ORDER_NOT_FOUND"));
-	}
-
-	@Test
-	void mapsAnotherCustomersOrderTo403() throws Exception {
-		when(orderService.getOrder(1L, 1L)).thenThrow(new ForbiddenOrderAccessException());
-		mockMvc.perform(get("/api/orders/1"))
-				.andExpect(status().isForbidden())
-				.andExpect(jsonPath("$.code").value("FORBIDDEN_ORDER_ACCESS"));
 	}
 
 	@Test
@@ -174,7 +128,7 @@ class OrderControllerTest {
 
 	@Test
 	void partiallyCancelsOrderItem() throws Exception {
-		when(orderCancellationService.cancelOrderItem(1L, 1L, 1, 1L)).thenReturn(response());
+		when(orderCancellationService.cancelOrderItem(1L, 1L, 1)).thenReturn(response());
 		mockMvc.perform(patch("/api/orders/1/items/1/cancel")
 					.contentType(MediaType.APPLICATION_JSON).content("{\"quantity\":1}"))
 				.andExpect(status().isOk());
@@ -182,7 +136,7 @@ class OrderControllerTest {
 
 	@Test
 	void mapsExcessiveCancellationTo409() throws Exception {
-		when(orderCancellationService.cancelOrderItem(1L, 1L, 10, 1L))
+		when(orderCancellationService.cancelOrderItem(1L, 1L, 10))
 				.thenThrow(new ExcessiveCancelQuantityException("주문 수량보다 많이 취소할 수 없습니다."));
 		mockMvc.perform(patch("/api/orders/1/items/1/cancel")
 					.contentType(MediaType.APPLICATION_JSON).content("{\"quantity\":10}"))
@@ -192,21 +146,21 @@ class OrderControllerTest {
 
 	@Test
 	void cancelsEntireOrderWith204() throws Exception {
-		doNothing().when(orderCancellationService).cancelOrder(1L, 1L);
+		doNothing().when(orderCancellationService).cancelOrder(1L);
 		mockMvc.perform(patch("/api/orders/1/cancel")).andExpect(status().isNoContent());
 	}
 
 	@Test
 	void mapsDuplicateCancellationTo409() throws Exception {
 		doThrow(new OrderAlreadyCancelledException("이미 취소된 주문입니다."))
-				.when(orderCancellationService).cancelOrder(1L, 1L);
+				.when(orderCancellationService).cancelOrder(1L);
 		mockMvc.perform(patch("/api/orders/1/cancel")).andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("ORDER_ALREADY_CANCELLED"));
 	}
 
 	@Test
 	void doesNotExposeJpaInternalsOrCircularOrderReference() throws Exception {
-		when(orderService.getOrder(1L, 1L)).thenReturn(response());
+		when(orderService.getOrder(1L)).thenReturn(response());
 		mockMvc.perform(get("/api/orders/1")).andExpect(status().isOk())
 				.andExpect(jsonPath("$.orderItems").doesNotExist())
 				.andExpect(jsonPath("$.items[0].order").doesNotExist())
@@ -215,42 +169,42 @@ class OrderControllerTest {
 
 	@Test
 	void mapsCustomerNotFoundDuringPlacement() throws Exception {
-		when(orderPlacementService.placeOrder(anyLong(), any())).thenThrow(new CustomerNotFoundException());
+		when(orderPlacementService.placeOrder(any())).thenThrow(new CustomerNotFoundException());
 		performValidCreate().andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("CUSTOMER_NOT_FOUND"));
 	}
 
 	@Test
 	void mapsWithdrawnCustomerDuringPlacement() throws Exception {
-		when(orderPlacementService.placeOrder(anyLong(), any())).thenThrow(new WithdrawnCustomerException());
+		when(orderPlacementService.placeOrder(any())).thenThrow(new WithdrawnCustomerException());
 		performValidCreate().andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("WITHDRAWN_CUSTOMER"));
 	}
 
 	@Test
 	void mapsInsufficientFundsDuringPlacement() throws Exception {
-		when(orderPlacementService.placeOrder(anyLong(), any())).thenThrow(new InsufficientFundsException());
+		when(orderPlacementService.placeOrder(any())).thenThrow(new InsufficientFundsException());
 		performValidCreate().andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("INSUFFICIENT_FUNDS"));
 	}
 
 	@Test
 	void mapsUserServiceUnavailableDuringPlacement() throws Exception {
-		when(orderPlacementService.placeOrder(anyLong(), any())).thenThrow(new UserServiceUnavailableException());
+		when(orderPlacementService.placeOrder(any())).thenThrow(new UserServiceUnavailableException());
 		performValidCreate().andExpect(status().isServiceUnavailable())
 				.andExpect(jsonPath("$.code").value("USER_SERVICE_UNAVAILABLE"));
 	}
 
 	@Test
 	void mapsInvalidPointAmountDuringPlacement() throws Exception {
-		when(orderPlacementService.placeOrder(anyLong(), any())).thenThrow(new InvalidPointAmountException());
+		when(orderPlacementService.placeOrder(any())).thenThrow(new InvalidPointAmountException());
 		performValidCreate().andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("INVALID_POINT_AMOUNT"));
 	}
 
 	@Test
 	void mapsCompensationFailureDuringPlacement() throws Exception {
-		when(orderPlacementService.placeOrder(anyLong(), any())).thenThrow(
+		when(orderPlacementService.placeOrder(any())).thenThrow(
 				new OrderCompensationFailedException(
 						new RuntimeException("order failure"), new RuntimeException("refund failure")));
 		performValidCreate().andExpect(status().isInternalServerError())
@@ -260,7 +214,7 @@ class OrderControllerTest {
 
 	@Test
 	void mapsWithdrawnCustomerDuringCancellation() throws Exception {
-		when(orderCancellationService.cancelOrderItem(1L, 1L, 1, 1L))
+		when(orderCancellationService.cancelOrderItem(1L, 1L, 1))
 				.thenThrow(new WithdrawnCustomerException());
 		performPartialCancel(1).andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("WITHDRAWN_CUSTOMER"));
@@ -268,7 +222,7 @@ class OrderControllerTest {
 
 	@Test
 	void mapsPointRequestConflictDuringCancellation() throws Exception {
-		when(orderCancellationService.cancelOrderItem(1L, 1L, 1, 1L))
+		when(orderCancellationService.cancelOrderItem(1L, 1L, 1))
 				.thenThrow(new PointRequestConflictException());
 		performPartialCancel(1).andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("POINT_REQUEST_CONFLICT"));
@@ -276,7 +230,7 @@ class OrderControllerTest {
 
 	@Test
 	void mapsUserServiceUnavailableDuringCancellation() throws Exception {
-		when(orderCancellationService.cancelOrderItem(1L, 1L, 1, 1L))
+		when(orderCancellationService.cancelOrderItem(1L, 1L, 1))
 				.thenThrow(new UserServiceUnavailableException());
 		performPartialCancel(1).andExpect(status().isServiceUnavailable())
 				.andExpect(jsonPath("$.code").value("USER_SERVICE_UNAVAILABLE"));
@@ -286,7 +240,7 @@ class OrderControllerTest {
 	void mapsCancellationCompensationFailure() throws Exception {
 		doThrow(new OrderCancellationCompensationFailedException(
 				new RuntimeException("commit"), new RuntimeException("re-deduct")))
-				.when(orderCancellationService).cancelOrder(1L, 1L);
+				.when(orderCancellationService).cancelOrder(1L);
 		mockMvc.perform(patch("/api/orders/1/cancel"))
 				.andExpect(status().isInternalServerError())
 				.andExpect(jsonPath("$.code").value("ORDER_CANCELLATION_COMPENSATION_FAILED"))

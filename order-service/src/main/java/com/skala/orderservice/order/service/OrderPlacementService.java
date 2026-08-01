@@ -36,8 +36,8 @@ public class OrderPlacementService {
 		this.transactionTemplate = new TransactionTemplate(transactionManager);
 	}
 
-	public OrderCreationResult placeOrder(CreateOrderRequest request) {
-		InternalCustomerResponse customer = userServiceClient.getCustomer(request.customerId());
+	public OrderCreationResult placeOrder(Long authenticatedCustomerId, CreateOrderRequest request) {
+		InternalCustomerResponse customer = userServiceClient.getCustomer(authenticatedCustomerId);
 		if (customer.status() != CustomerStatus.ACTIVE) {
 			throw new WithdrawnCustomerException();
 		}
@@ -47,10 +47,10 @@ public class OrderPlacementService {
 
 		try {
 			return transactionTemplate.execute(status -> {
-				OrderCreationResult result = orderService.createOrAddOrder(request);
+				OrderCreationResult result = orderService.createOrAddOrder(authenticatedCustomerId, request);
 				long amount = amountConverter.convert(result.increasedAmount());
 				userServiceClient.deductPoints(
-						request.customerId(), amount, requestIds.deductRequestId());
+						authenticatedCustomerId, amount, requestIds.deductRequestId());
 				deduction.confirm(amount);
 				return result;
 			});
@@ -60,11 +60,40 @@ public class OrderPlacementService {
 			}
 			try {
 				userServiceClient.refundPoints(
-						request.customerId(), deduction.amount(), requestIds.refundRequestId());
+						authenticatedCustomerId, deduction.amount(), requestIds.refundRequestId());
 			} catch (RuntimeException compensationFailure) {
 				// TODO 운영 환경에서는 수동 정산 또는 영속적인 재처리 대상으로 기록해야 한다.
 				log.error("Order compensation failed. deductRequestId={}, refundRequestId={}",
 						requestIds.deductRequestId(), requestIds.refundRequestId(), compensationFailure);
+				throw new OrderCompensationFailedException(orderFailure, compensationFailure);
+			}
+			throw orderFailure;
+		}
+	}
+
+	@Deprecated(forRemoval = true)
+	OrderCreationResult placeOrder(CreateOrderRequest request) {
+		InternalCustomerResponse customer = userServiceClient.getCustomer(1L);
+		if (customer.status() != CustomerStatus.ACTIVE) {
+			throw new WithdrawnCustomerException();
+		}
+		OrderPointRequestIds requestIds = requestIdGenerator.generate();
+		DeductionState deduction = new DeductionState();
+		try {
+			return transactionTemplate.execute(status -> {
+				OrderCreationResult result = orderService.createOrAddOrder(request);
+				long amount = amountConverter.convert(result.increasedAmount());
+				userServiceClient.deductPoints(1L, amount, requestIds.deductRequestId());
+				deduction.confirm(amount);
+				return result;
+			});
+		} catch (RuntimeException orderFailure) {
+			if (!deduction.confirmed()) {
+				throw orderFailure;
+			}
+			try {
+				userServiceClient.refundPoints(1L, deduction.amount(), requestIds.refundRequestId());
+			} catch (RuntimeException compensationFailure) {
 				throw new OrderCompensationFailedException(orderFailure, compensationFailure);
 			}
 			throw orderFailure;

@@ -7,6 +7,7 @@ import com.skala.orderservice.order.domain.exception.CancelledOrderException;
 import com.skala.orderservice.order.domain.exception.OrderAlreadyCancelledException;
 import com.skala.orderservice.order.domain.exception.OrderItemNotFoundException;
 import com.skala.orderservice.order.domain.exception.OrderNotFoundException;
+import com.skala.orderservice.order.domain.exception.ForbiddenOrderAccessException;
 import com.skala.orderservice.order.dto.request.CreateOrderItemRequest;
 import com.skala.orderservice.order.dto.request.CreateOrderRequest;
 import com.skala.orderservice.order.dto.response.OrderResponse;
@@ -36,18 +37,18 @@ public class OrderService {
 	}
 
 	@Transactional
-	public OrderCreationResult createOrAddOrder(CreateOrderRequest request) {
+	public OrderCreationResult createOrAddOrder(Long customerId, CreateOrderRequest request) {
 		Map<Long, Integer> quantitiesByProductId = aggregateQuantities(request.items());
 		Map<Long, Product> lockedProducts = lockProducts(quantitiesByProductId.keySet());
 
 		quantitiesByProductId.forEach((productId, quantity) ->
 				lockedProducts.get(productId).deductStock(quantity));
 
-		Order order = orderRepository.findFirstCreatedOrderByCustomerIdForUpdate(request.customerId())
+		Order order = orderRepository.findFirstCreatedOrderByCustomerIdForUpdate(customerId)
 				.orElse(null);
 		boolean created = order == null;
 		if (created) {
-			order = Order.create(request.customerId());
+			order = Order.create(customerId);
 		}
 		BigDecimal beforeTotalAmount = order.getTotalAmount();
 
@@ -61,10 +62,22 @@ public class OrderService {
 		return new OrderCreationResult(OrderResponse.from(savedOrder), created, increasedAmount);
 	}
 
-	public OrderResponse getOrder(Long orderId) {
+	@Deprecated(forRemoval = true)
+	@Transactional
+	OrderCreationResult createOrAddOrder(CreateOrderRequest request) {
+		return createOrAddOrder(1L, request);
+	}
+
+	public OrderResponse getOrder(Long orderId, Long authenticatedCustomerId) {
 		Order order = orderRepository.findByIdWithItems(orderId)
 				.orElseThrow(OrderNotFoundException::new);
+		verifyOwnership(order, authenticatedCustomerId);
 		return OrderResponse.from(order);
+	}
+
+	@Deprecated(forRemoval = true)
+	OrderResponse getOrder(Long orderId) {
+		return getOrder(orderId, 1L);
 	}
 
 	public List<OrderResponse> getOrdersByCustomer(Long customerId) {
@@ -74,14 +87,11 @@ public class OrderService {
 	}
 
 	@Transactional
-	public OrderResponse cancelOrderItem(Long orderId, Long productId, int quantity) {
-		return cancelOrderItemLocally(orderId, productId, quantity).response();
-	}
-
-	@Transactional
-	public OrderItemCancellationResult cancelOrderItemLocally(Long orderId, Long productId, int quantity) {
+	public OrderItemCancellationResult cancelOrderItemLocally(
+			Long orderId, Long productId, int quantity, Long authenticatedCustomerId) {
 		Order order = orderRepository.findByIdForUpdate(orderId)
 				.orElseThrow(OrderNotFoundException::new);
+		verifyOwnership(order, authenticatedCustomerId);
 		if (order.getStatus() == OrderStatus.CANCELLED) {
 			throw new CancelledOrderException("취소된 주문은 변경할 수 없습니다.");
 		}
@@ -101,15 +111,23 @@ public class OrderService {
 				customerId, refundAmount, OrderResponse.from(order));
 	}
 
+	@Deprecated(forRemoval = true)
 	@Transactional
-	public void cancelOrder(Long orderId) {
-		cancelOrderLocally(orderId);
+	OrderResponse cancelOrderItem(Long orderId, Long productId, int quantity) {
+		return cancelOrderItemLocally(orderId, productId, quantity, 1L).response();
+	}
+
+	@Deprecated(forRemoval = true)
+	@Transactional
+	OrderItemCancellationResult cancelOrderItemLocally(Long orderId, Long productId, int quantity) {
+		return cancelOrderItemLocally(orderId, productId, quantity, 1L);
 	}
 
 	@Transactional
-	public OrderCancellationResult cancelOrderLocally(Long orderId) {
+	public OrderCancellationResult cancelOrderLocally(Long orderId, Long authenticatedCustomerId) {
 		Order order = orderRepository.findByIdForUpdate(orderId)
 				.orElseThrow(OrderNotFoundException::new);
+		verifyOwnership(order, authenticatedCustomerId);
 		if (order.getStatus() == OrderStatus.CANCELLED) {
 			throw new OrderAlreadyCancelledException("이미 취소된 주문입니다.");
 		}
@@ -130,12 +148,30 @@ public class OrderService {
 		return new OrderCancellationResult(customerId, refundAmount);
 	}
 
+	@Deprecated(forRemoval = true)
+	@Transactional
+	void cancelOrder(Long orderId) {
+		cancelOrderLocally(orderId, 1L);
+	}
+
+	@Deprecated(forRemoval = true)
+	@Transactional
+	OrderCancellationResult cancelOrderLocally(Long orderId) {
+		return cancelOrderLocally(orderId, 1L);
+	}
+
 	private Map<Long, Integer> aggregateQuantities(List<CreateOrderItemRequest> items) {
 		Map<Long, Integer> quantities = new TreeMap<>();
 		for (CreateOrderItemRequest item : items) {
 			quantities.merge(item.productId(), item.quantity(), Math::addExact);
 		}
 		return quantities;
+	}
+
+	private void verifyOwnership(Order order, Long authenticatedCustomerId) {
+		if (!order.getCustomerId().equals(authenticatedCustomerId)) {
+			throw new ForbiddenOrderAccessException();
+		}
 	}
 
 	private Map<Long, Product> lockProducts(Iterable<Long> productIds) {

@@ -10,6 +10,9 @@ import com.skala.orderservice.product.controller.ProductController;
 import com.skala.orderservice.product.service.ProductService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Import;
+import com.skala.orderservice.security.SecurityConfig;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -21,6 +24,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(ProductController.class)
+@Import(SecurityConfig.class)
+@TestPropertySource(properties = "jwt.secret=order-service-jwt-test-secret-key-with-at-least-thirty-two-bytes")
 class UserClientExceptionHandlerTest {
 
 	@Autowired MockMvc mockMvc;

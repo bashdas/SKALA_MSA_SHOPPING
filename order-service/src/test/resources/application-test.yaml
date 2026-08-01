@@ -19,3 +19,6 @@ clients:
     base-url: http://localhost:18081
     connect-timeout: 100ms
     read-timeout: 200ms
+
+jwt:
+  secret: order-service-jwt-test-secret-key-with-at-least-thirty-two-bytes

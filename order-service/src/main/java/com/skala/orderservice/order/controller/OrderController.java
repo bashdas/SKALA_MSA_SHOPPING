@@ -7,8 +7,9 @@ import com.skala.orderservice.order.service.OrderCreationResult;
 import com.skala.orderservice.order.service.OrderCancellationService;
 import com.skala.orderservice.order.service.OrderPlacementService;
 import com.skala.orderservice.order.service.OrderService;
+import com.skala.orderservice.security.AuthenticatedCustomer;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Positive;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -16,7 +17,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
@@ -40,8 +40,10 @@ public class OrderController {
 	}
 
 	@PostMapping
-	public ResponseEntity<OrderResponse> createOrAddOrder(@Valid @RequestBody CreateOrderRequest request) {
-		OrderCreationResult result = orderPlacementService.placeOrder(request);
+	public ResponseEntity<OrderResponse> createOrAddOrder(
+			@AuthenticationPrincipal AuthenticatedCustomer customer,
+			@Valid @RequestBody CreateOrderRequest request) {
+		OrderCreationResult result = orderPlacementService.placeOrder(customer.customerId(), request);
 		if (result.created()) {
 			return ResponseEntity
 					.created(URI.create("/api/orders/" + result.response().id()))
@@ -51,26 +53,33 @@ public class OrderController {
 	}
 
 	@GetMapping("/{orderId}")
-	public OrderResponse getOrder(@PathVariable Long orderId) {
-		return orderService.getOrder(orderId);
+	public OrderResponse getOrder(
+			@PathVariable Long orderId,
+			@AuthenticationPrincipal AuthenticatedCustomer customer) {
+		return orderService.getOrder(orderId, customer.customerId());
 	}
 
 	@GetMapping
-	public List<OrderResponse> getOrdersByCustomer(@RequestParam @Positive Long customerId) {
-		return orderService.getOrdersByCustomer(customerId);
+	public List<OrderResponse> getOrdersByCustomer(
+			@AuthenticationPrincipal AuthenticatedCustomer customer) {
+		return orderService.getOrdersByCustomer(customer.customerId());
 	}
 
 	@PatchMapping("/{orderId}/items/{productId}/cancel")
 	public OrderResponse cancelOrderItem(
 			@PathVariable Long orderId,
 			@PathVariable Long productId,
+			@AuthenticationPrincipal AuthenticatedCustomer customer,
 			@Valid @RequestBody CancelOrderItemRequest request) {
-		return orderCancellationService.cancelOrderItem(orderId, productId, request.quantity());
+		return orderCancellationService.cancelOrderItem(
+				orderId, productId, request.quantity(), customer.customerId());
 	}
 
 	@PatchMapping("/{orderId}/cancel")
-	public ResponseEntity<Void> cancelOrder(@PathVariable Long orderId) {
-		orderCancellationService.cancelOrder(orderId);
+	public ResponseEntity<Void> cancelOrder(
+			@PathVariable Long orderId,
+			@AuthenticationPrincipal AuthenticatedCustomer customer) {
+		orderCancellationService.cancelOrder(orderId, customer.customerId());
 		return ResponseEntity.noContent().build();
 	}
 }

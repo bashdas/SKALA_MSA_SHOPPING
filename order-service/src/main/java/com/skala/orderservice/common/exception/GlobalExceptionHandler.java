@@ -8,6 +8,7 @@ import com.skala.orderservice.client.user.exception.UserServiceUnavailableExcept
 import com.skala.orderservice.client.user.exception.WithdrawnCustomerException;
 import com.skala.orderservice.order.domain.exception.CancelledOrderException;
 import com.skala.orderservice.order.domain.exception.ExcessiveCancelQuantityException;
+import com.skala.orderservice.order.domain.exception.ForbiddenOrderAccessException;
 import com.skala.orderservice.order.domain.exception.InvalidCustomerIdException;
 import com.skala.orderservice.order.domain.exception.InvalidOrderItemException;
 import com.skala.orderservice.order.domain.exception.InvalidOrderQuantityException;
@@ -83,6 +84,12 @@ public class GlobalExceptionHandler {
 	public ResponseEntity<ErrorResponse> handleOrderNotFound(
 			OrderNotFoundException exception, HttpServletRequest request) {
 		return error(HttpStatus.NOT_FOUND, "ORDER_NOT_FOUND", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(ForbiddenOrderAccessException.class)
+	public ResponseEntity<ErrorResponse> handleForbiddenOrderAccess(
+			ForbiddenOrderAccessException exception, HttpServletRequest request) {
+		return error(HttpStatus.FORBIDDEN, "FORBIDDEN_ORDER_ACCESS", exception.getMessage(), request);
 	}
 
 	@ExceptionHandler(OrderItemNotFoundException.class)

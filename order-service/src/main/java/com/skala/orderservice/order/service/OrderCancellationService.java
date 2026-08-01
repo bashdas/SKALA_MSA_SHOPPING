@@ -33,13 +33,15 @@ public class OrderCancellationService {
 		this.transactionTemplate = new TransactionTemplate(transactionManager);
 	}
 
-	public OrderResponse cancelOrderItem(Long orderId, Long productId, int quantity) {
+	public OrderResponse cancelOrderItem(
+			Long orderId, Long productId, int quantity, Long authenticatedCustomerId) {
 		OrderCancellationPointRequestIds requestIds = requestIdGenerator.generate();
 		RefundState refund = new RefundState();
 		try {
 			return transactionTemplate.execute(status -> {
 				OrderItemCancellationResult result =
-						orderService.cancelOrderItemLocally(orderId, productId, quantity);
+						orderService.cancelOrderItemLocally(
+								orderId, productId, quantity, authenticatedCustomerId);
 				long amount = amountConverter.convert(result.refundAmount());
 				userServiceClient.refundPoints(
 						result.customerId(), amount, requestIds.refundRequestId());
@@ -52,15 +54,52 @@ public class OrderCancellationService {
 		}
 	}
 
-	public void cancelOrder(Long orderId) {
+	@Deprecated(forRemoval = true)
+	OrderResponse cancelOrderItem(Long orderId, Long productId, int quantity) {
+		OrderCancellationPointRequestIds requestIds = requestIdGenerator.generate();
+		RefundState refund = new RefundState();
+		try {
+			return transactionTemplate.execute(status -> {
+				OrderItemCancellationResult result =
+						orderService.cancelOrderItemLocally(orderId, productId, quantity);
+				long amount = amountConverter.convert(result.refundAmount());
+				userServiceClient.refundPoints(result.customerId(), amount, requestIds.refundRequestId());
+				refund.confirm(result.customerId(), amount);
+				return result.response();
+			});
+		} catch (RuntimeException cancellationFailure) {
+			compensateIfConfirmed(refund, requestIds, cancellationFailure);
+			throw cancellationFailure;
+		}
+	}
+
+	public void cancelOrder(Long orderId, Long authenticatedCustomerId) {
+		OrderCancellationPointRequestIds requestIds = requestIdGenerator.generate();
+		RefundState refund = new RefundState();
+		try {
+			transactionTemplate.executeWithoutResult(status -> {
+				OrderCancellationResult result =
+						orderService.cancelOrderLocally(orderId, authenticatedCustomerId);
+				long amount = amountConverter.convert(result.refundAmount());
+				userServiceClient.refundPoints(
+						result.customerId(), amount, requestIds.refundRequestId());
+				refund.confirm(result.customerId(), amount);
+			});
+		} catch (RuntimeException cancellationFailure) {
+			compensateIfConfirmed(refund, requestIds, cancellationFailure);
+			throw cancellationFailure;
+		}
+	}
+
+	@Deprecated(forRemoval = true)
+	void cancelOrder(Long orderId) {
 		OrderCancellationPointRequestIds requestIds = requestIdGenerator.generate();
 		RefundState refund = new RefundState();
 		try {
 			transactionTemplate.executeWithoutResult(status -> {
 				OrderCancellationResult result = orderService.cancelOrderLocally(orderId);
 				long amount = amountConverter.convert(result.refundAmount());
-				userServiceClient.refundPoints(
-						result.customerId(), amount, requestIds.refundRequestId());
+				userServiceClient.refundPoints(result.customerId(), amount, requestIds.refundRequestId());
 				refund.confirm(result.customerId(), amount);
 			});
 		} catch (RuntimeException cancellationFailure) {

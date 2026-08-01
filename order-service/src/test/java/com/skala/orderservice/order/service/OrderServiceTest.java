@@ -139,7 +139,7 @@ class OrderServiceTest {
 		Product product = product(1L, "키보드", 1_000, 10);
 		stubNewOrder(2L, product);
 
-		OrderCreationResult result = orderService.createOrAddOrder(request(2L, item(1L, 1)));
+		OrderCreationResult result = orderService.createOrAddOrder(2L, request(2L, item(1L, 1)));
 
 		assertThat(result.created()).isTrue();
 		assertThat(result.response().customerId()).isEqualTo(2L);
