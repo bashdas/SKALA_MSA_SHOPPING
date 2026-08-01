@@ -24,3 +24,9 @@ spring:
     properties:
       hibernate:
         format_sql: true
+
+clients:
+  user-service:
+    base-url: ${USER_SERVICE_BASE_URL:http://localhost:8081}
+    connect-timeout: ${USER_SERVICE_CONNECT_TIMEOUT:1s}
+    read-timeout: ${USER_SERVICE_READ_TIMEOUT:3s}

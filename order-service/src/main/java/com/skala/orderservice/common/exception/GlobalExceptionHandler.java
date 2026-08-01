@@ -1,5 +1,11 @@
 package com.skala.orderservice.common.exception;
 
+import com.skala.orderservice.client.user.exception.CustomerNotFoundException;
+import com.skala.orderservice.client.user.exception.InsufficientFundsException;
+import com.skala.orderservice.client.user.exception.PointRequestConflictException;
+import com.skala.orderservice.client.user.exception.UserServiceResponseException;
+import com.skala.orderservice.client.user.exception.UserServiceUnavailableException;
+import com.skala.orderservice.client.user.exception.WithdrawnCustomerException;
 import com.skala.orderservice.order.domain.exception.CancelledOrderException;
 import com.skala.orderservice.order.domain.exception.ExcessiveCancelQuantityException;
 import com.skala.orderservice.order.domain.exception.InvalidCustomerIdException;
@@ -116,6 +122,42 @@ public class GlobalExceptionHandler {
 	public ResponseEntity<ErrorResponse> handleOrderAlreadyCancelled(
 			OrderAlreadyCancelledException exception, HttpServletRequest request) {
 		return error(HttpStatus.CONFLICT, "ORDER_ALREADY_CANCELLED", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(CustomerNotFoundException.class)
+	public ResponseEntity<ErrorResponse> handleCustomerNotFound(
+			CustomerNotFoundException exception, HttpServletRequest request) {
+		return error(HttpStatus.NOT_FOUND, "CUSTOMER_NOT_FOUND", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(WithdrawnCustomerException.class)
+	public ResponseEntity<ErrorResponse> handleWithdrawnCustomer(
+			WithdrawnCustomerException exception, HttpServletRequest request) {
+		return error(HttpStatus.CONFLICT, "WITHDRAWN_CUSTOMER", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(InsufficientFundsException.class)
+	public ResponseEntity<ErrorResponse> handleInsufficientFunds(
+			InsufficientFundsException exception, HttpServletRequest request) {
+		return error(HttpStatus.CONFLICT, "INSUFFICIENT_FUNDS", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(PointRequestConflictException.class)
+	public ResponseEntity<ErrorResponse> handlePointRequestConflict(
+			PointRequestConflictException exception, HttpServletRequest request) {
+		return error(HttpStatus.CONFLICT, "POINT_REQUEST_CONFLICT", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(UserServiceUnavailableException.class)
+	public ResponseEntity<ErrorResponse> handleUserServiceUnavailable(
+			UserServiceUnavailableException exception, HttpServletRequest request) {
+		return error(HttpStatus.SERVICE_UNAVAILABLE, "USER_SERVICE_UNAVAILABLE", exception.getMessage(), request);
+	}
+
+	@ExceptionHandler(UserServiceResponseException.class)
+	public ResponseEntity<ErrorResponse> handleUserServiceResponse(
+			UserServiceResponseException exception, HttpServletRequest request) {
+		return error(HttpStatus.BAD_GATEWAY, "USER_SERVICE_ERROR", exception.getMessage(), request);
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)
